@@ -3,15 +3,22 @@
 # Copyright 2017 Johns Hopkins University (Shinji Watanabe)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
+# Train a CTC model for alignment purpose
+# if had ran stage 1 and 2, skip them
+# only run stage 4 and 5 - CTC (RNN) training and recognition
+# other stages are optional
+
+# turned the specaug off
+
 . ./path.sh || exit 1;
 . ./cmd.sh || exit 1;
 
 # general configuration
 backend=pytorch
-stage=0       # start from -1 if you need to start from data download
+stage=4       # start from -1 if you need to start from data download
 stop_stage=100
-ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=64
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=32
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
@@ -21,8 +28,9 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/specaug.yaml
-train_config=conf/train.yaml # current default recipe requires 4 gpus.
+# preprocess_config=conf/specaug.yaml
+preprocess_config=
+train_config=conf/ctc_train.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -216,10 +224,10 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+    # --preprocess-conf ${preprocess_config}
+    CUDA_VISIBLE_DEVICES=4,5,6,7 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
-        --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
         --backend ${backend} \
         --outdir ${expdir}/results \
@@ -286,7 +294,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
-        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+        CUDA_VISIBLE_DEVICES=4,5,6,7 ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             asr_recog.py \
             --config ${decode_config} \
             --ngpu ${ngpu} \
