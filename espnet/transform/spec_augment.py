@@ -144,6 +144,46 @@ class TimeMask(FuncTrans):
         return super().__call__(x)
 
 
+def prob_word_mask(spec, words, n_mask=1, replace_with_zero=True, inplace=False):
+    """probablistic word mask for spec augument
+
+    :param numpy.ndarray spec: (time, freq)
+    :param words: (wrdtimes, wrdprobs)
+    :   wrdtimes: list of word boundaries [ (s_0, e_0), ..., [s_n-1, e_n-1] ]
+    :   wrdprobs: list of word probabilities [ p_0, ... , p_n-1 ]
+    :param int n_mask: the number of masks (currently just 1 mask)
+    :param bool inplace: overwrite
+    :param bool replace_with_zero: pad zero on mask if true else use mean
+    """
+    if inplace:
+        cloned = spec
+    else:
+        cloned = spec.copy()
+    len_spectro = cloned.shape[0]
+
+    wrdtimes, wrdprobs = words
+    for i in range(n_mask):
+        if wrdprobs is not None:
+            id = numpy.random.choice(numpy.arange(len(wrdprobs)), wrdprobs)
+        else:
+            id = numpy.random.randint(len(wrdtimes))
+        s, e = wrdprobs[id]
+        if replace_with_zero:
+            cloned[s:e] = 0
+        else:
+            cloned[s:e] = cloned.mean()
+    return cloned
+
+
+class ProbWordMask(FuncTrans):
+    _func = prob_word_mask
+    __doc__ = prob_word_mask.__doc__
+
+    def __call__(self, x, train):
+        if not train:
+            return x
+        return super().__call__(x)
+
 def spec_augment(
     x,
     resize_mode="PIL",
@@ -191,10 +231,64 @@ def spec_augment(
     )
     return x
 
-
 class SpecAugment(FuncTrans):
     _func = spec_augment
     __doc__ = spec_augment.__doc__
+
+    def __call__(self, x, train):
+        if not train:
+            return x
+        return super().__call__(x)
+
+
+def prob_word_spec_augment(
+    x,
+    wrdtimes=None,
+    wrdprobs=None,
+    resize_mode="PIL",
+    max_time_warp=80,
+    max_freq_width=27,
+    n_freq_mask=2,
+    n_time_mask=2,
+    inplace=True,
+    replace_with_zero=True,
+):
+    """prob word spec agument
+
+    :param numpy.ndarray x: (time, freq)
+    :param str resize_mode: "PIL" (fast, nondifferentiable) or "sparse_image_warp"
+        (slow, differentiable)
+    :param int max_time_warp: maximum frames to warp the center frame in spectrogram (W)
+    :param int freq_mask_width: maximum width of the random freq mask (F)
+    :param int n_freq_mask: the number of the random freq mask (m_F)
+    :param int time_mask_width: maximum width of the random time mask (T)
+    :param int n_time_mask: the number of the random time mask (m_T)
+    :param bool inplace: overwrite intermediate array
+    :param bool replace_with_zero: pad zero on mask if true else use mean
+    """
+    assert isinstance(x, numpy.ndarray)
+    assert x.ndim == 2
+    x = time_warp(x, max_time_warp, inplace=inplace, mode=resize_mode)
+    x = freq_mask(
+        x,
+        max_freq_width,
+        n_freq_mask,
+        inplace=inplace,
+        replace_with_zero=replace_with_zero,
+    )
+    x = prob_word_mask(
+        x,
+        wrdtimes,
+        wrdprobs,
+        n_time_mask,
+        inplace=inplace,
+        replace_with_zero=replace_with_zero,
+    )
+    return x
+
+class ProbWordSpecAugment(FuncTrans):
+    _func = prob_word_spec_augment
+    __doc__ = prob_word_spec_augment.__doc__
 
     def __call__(self, x, train):
         if not train:
