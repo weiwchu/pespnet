@@ -58,8 +58,6 @@ def main():
                 for line in g.readlines():
                     # 8842-302201-0002 ",BUT,WHEN,I,STIL.. ," "0.290,0.430,0.560, ..." # ending_times
                     word_info = []
-                    args.out.write(line + "\n")
-                    args.out.write(args.align_info_list + "\n")
                     uttid, text_str, time_str = line.split()
                     words = text_str.replace('"','').split(',')
                     end_times = time_str.replace('"','').split(',')
@@ -78,14 +76,14 @@ def main():
     with open(args.utt_list_file) as f:
         for line in f.readlines():
             uttid = line.strip()
-            args.out.write("({} )".format(uttid))
+            args.out.write("{}".format(uttid))
             if uttid in hwords:
                 # uttid (0.0 0.20 1.0 '') (0.20 0.78 1.0 'WE')
                 for word, start_time, end_time in hwords[uttid]:
-                    args.out.write("({:d} {:d} {:.4f} '{}')".format(int(start_time*100), int(end_time*100), prob, word))
+                    args.out.write(" {:d},{:d},{:.4f},{}".format(int(start_time*100), int(end_time*100), prob, word))
             else:
                 # no valid alignment
-                args.out.write("(0 0 1.000 '')")
+                args.out.write(" 0,0,1.000,''")
             args.out.write("\n")
 
 if __name__ == "__main__":

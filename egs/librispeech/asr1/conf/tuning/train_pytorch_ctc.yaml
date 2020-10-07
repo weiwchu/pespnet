@@ -34,5 +34,6 @@ patience: 3
 # scheduled sampling option
 sampling-probability: 0.0
 backend: pytorch
-n-iter-processes: 4
+
+n-iter-processes: 10
 # model-module: "espnet.nets.pytorch_backend.e2e_asr:E2E"

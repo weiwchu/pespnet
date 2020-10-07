@@ -44,7 +44,7 @@ def get_parser():
         "<key>:<file>:<type>. type> can be omitted and the default "
         'is "str". e.g. {} '
         "--input-scps feat:data/feats.scp shape:data/utt2feat_shape:shape "
-        "--word-scps word:data/words.scp shape:data/utt2word_shape:shape "
+        "--word-scps word:data/words.scp"
         "--output-scps text:data/text shape:data/utt2text_shape:shape "
         "--scps utt2spk:data/utt2spk".format(sys.argv[0]),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -162,7 +162,7 @@ if __name__ == "__main__":
                 lis.append((key, scp, type_func, key_scp, type_func_str))
             lis_list.append(lis)
 
-    # Open  scp files
+    # Open scp files
     input_fscps = [
         [open(i[1], "r", encoding="utf-8") for i in il] for il in input_infos
     ]

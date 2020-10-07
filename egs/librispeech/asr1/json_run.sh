@@ -141,7 +141,7 @@ bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
 echo "dictionary: ${dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
-:<<com
+
     echo "stage 2: Dictionary and Json Data Preparation"
     mkdir -p data/lang_char/
     echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
@@ -152,17 +152,14 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 
     # make json labels
     probworddata2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_set} ${dict} > ${feat_tr_dir}/data_${bpemode}${nbpe}.json
+        data/${train_set} ${dict} > ${feat_tr_dir}/probword_data_${bpemode}${nbpe}.json
     probworddata2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_dev} ${dict} > ${feat_dt_dir}/data_${bpemode}${nbpe}.json
-com
+        data/${train_dev} ${dict} > ${feat_dt_dir}/probword_data_${bpemode}${nbpe}.json
+
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        # echo probworddata2json.sh
-        # probworddata2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
-        #    data/${rtask} ${dict} ${alidir}/${rtask} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
         probworddata2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
-            data/${rtask} ${dict} ${alidir}/${rtask}
+            data/${rtask} ${dict} ${alidir}/${rtask} > ${feat_recog_dir}/probword_data_${bpemode}${nbpe}.json
     done
 fi
 
