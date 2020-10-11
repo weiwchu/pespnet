@@ -143,7 +143,6 @@ do
 done < ${tmpdir}/word/align_txt.lst
 
 awk '{print $1}' ${dir}/utt2spk >${tmpdir}/word/utt
-echo ${tmpdir}/word/align_info
 python ../../../utils/align_to_word_info.py \
     --align-info-list ${tmpdir}/word/align_txt.lst \
     --utt-list-file ${tmpdir}/word/utt >${tmpdir}/word/words.scp

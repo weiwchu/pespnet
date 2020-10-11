@@ -274,11 +274,23 @@ class CustomConverter(object):
         """
         # batch should be located in list
         assert len(batch) == 1
-        xs, ys = batch[0]
-
+        if len(batch[0]) == 2:
+            xs, ys = batch[0]
+            words = None
+        elif len(batch[0]) == 3:
+            # word not used
+            xs, words, ys = batch[0]
+        
+        # assert len(batch[0]) == 2, batch[0]
         # perform subsampling
         if self.subsampling_factor > 1:
             xs = [x[:: self.subsampling_factor, :] for x in xs]
+            # if words is not None:
+            #     new_words = []
+            #     for w in words:
+            #         new_w = [(int(sf/self.subsampling_factor), int(ef/self.subsampling_factor), prob) for sf, ef, prob in w ]
+            #         new_words.append(w)
+            #     words = new_words
 
         # get batch of lengths of input sequences
         ilens = np.array([x.shape[0] for x in xs])
@@ -592,7 +604,7 @@ def train(args):
         iaxis=0,
         oaxis=0,
     )
-
+    
     load_tr = LoadInputsAndTargets(
         mode="asr",
         load_output=True,

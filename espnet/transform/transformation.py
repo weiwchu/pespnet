@@ -27,6 +27,7 @@ import_alias = dict(
     time_warp="espnet.transform.spec_augment:TimeWarp",
     time_mask="espnet.transform.spec_augment:TimeMask",
     freq_mask="espnet.transform.spec_augment:FreqMask",
+    prob_word_mask="espnet.transform.spec_augment:ProbWordMask",
     spec_augment="espnet.transform.spec_augment:SpecAugment",
     probwordspec_augment="espnet.transform.spec_augment:ProbWordSpecAugment",
     speed_perturbation="espnet.transform.perturb:SpeedPerturbation",
@@ -114,7 +115,7 @@ class Transformation(object):
         """Return new mini-batch
 
         :param Union[Sequence[np.ndarray], np.ndarray] xs:
-        :param Union[Sequence[np.ndarray], np.ndarray] words:
+        :param Union[Sequence[np.ndarray], np.ndarray] words: TODO: need to be changed
         :param Union[Sequence[str], str] uttid_list:
         :return: batch:
         :rtype: List[np.ndarray]
@@ -142,8 +143,8 @@ class Transformation(object):
                 try:
                     if uttid_list is not None and "uttid" in param:
                         xs = [func(x, u, **_kwargs) for x, u in zip(xs, uttid_list)]
-                    elif words is not None and "words" in param:
-                        xs = [func(x, w, **_kwargs) for x, w in zip(xs, words)]
+                    elif words is not None and "w" in param:
+                        xs, w = map(list, zip(*[func(x, w, **_kwargs) for x, w in zip(xs, words)]))
                     else:
                         xs = [func(x, **_kwargs) for x in xs]
                 except Exception:

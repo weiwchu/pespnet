@@ -107,6 +107,7 @@ class LoadInputsAndTargets(object):
         y_feats_dict = OrderedDict()  # OrderedDict[str, List[np.ndarray]]
         words_dict = OrderedDict()    # OrderedDict[str, List[np.ndarray]]
         uttid_list = []  # List[str]
+        probword_flag = False
 
         for uttid, info in batch:
             uttid_list.append(uttid)
@@ -121,24 +122,19 @@ class LoadInputsAndTargets(object):
                     x = self._get_from_loader(
                         filepath=inp["feat"], filetype=inp.get("filetype", "mat")
                     )
+                    inp["name"] = 'input1'
                     x_feats_dict.setdefault(inp["name"], []).append(x)
                 
-                if self.mode == "probwordasr":
-                    # {"word": [{"startframe": "22 84 ..."},
-                    #           {"endframe": "25 89 ...",}
-                    #           {"prob": 0.2 0.3 ..."}])
+                if "word" in info:
+                    # {"word": [{"name": "word1", "words": "0,30,1.0000, 30,69,1.0000,TOM 69,77,1.0000, ...}])
+                    probword_flag = True
                     for idx, inp in enumerate(info["word"]):
-                        startframe = np.fromiter(
-                            map(int, inp["startframe"].split()), dtype=np.int64
-                        )
-                        endframe = np.fromiter(
-                            map(int, inp["endframe"].split()), dtype=np.int64
-                        )
-                        prob = np.fromiter(
-                            map(float, inp["prob"].split()), dtype=np.float64
-                        )
-                        w = [x for x in zip(startframe, endframe, prob)]
-                        words_dict.setdefault(inp["name"], []).append(w)
+                        words = []
+                        for s in inp["words"].split():
+                            startframe, endframe, prob, _ = s.split(',')
+                            w = (int(startframe), int(endframe), float(prob))
+                            words.append(w)
+                        words_dict.setdefault(inp["name"], []).append(words)
 
             # FIXME(kamo): Dirty way to load only speaker_embedding
             elif self.mode == "tts" and self.use_speaker_embedding:
@@ -178,13 +174,14 @@ class LoadInputsAndTargets(object):
                     y_feats_dict.setdefault(inp["name"], []).append(x)
 
         if self.mode == "asr":
-            return_batch, uttid_list = self._create_batch_asr(
-                x_feats_dict, y_feats_dict, uttid_list
-            )
-        elif self.mode == "probwordasr":
-            return_batch, uttid_list = self._create_batch_probword_asr(
-                x_feats_dict, y_feats_dict, words_dict, uttid_list
-            )
+            if probword_flag is False:
+                return_batch, uttid_list = self._create_batch_asr(
+                    x_feats_dict, y_feats_dict, uttid_list
+                )
+            else:
+                return_batch, uttid_list = self._create_batch_probword_asr(
+                    x_feats_dict, y_feats_dict, words_dict, uttid_list
+                )
         elif self.mode == "tts":
             _, info = batch[0]
             eos = int(info["output"][0]["shape"][1]) - 1
@@ -206,9 +203,14 @@ class LoadInputsAndTargets(object):
             # Apply pre-processing all input features
             for x_name in return_batch.keys():
                 if x_name.startswith("input"):
-                    return_batch[x_name] = self.preprocessing(
-                        return_batch[x_name], uttid_list, **self.preprocess_args
-                    )
+                    if 'word1' in return_batch.keys():
+                        return_batch[x_name] = self.preprocessing(
+                            return_batch[x_name], return_batch['word1'], uttid_list, **self.preprocess_args
+                        )
+                    else:
+                        return_batch[x_name] = self.preprocessing(
+                            return_batch[x_name], None, uttid_list, **self.preprocess_args
+                        )
 
         # Doesn't return the names now.
         return tuple(return_batch.values())
@@ -298,7 +300,7 @@ class LoadInputsAndTargets(object):
         if self.load_output:
             ys = list(y_feats_dict.values())
             assert len(xs[0]) == len(ys[0]), (len(xs[0]), len(ys[0]))
-            assert len(xs[0]) == len(words[0]), (len(xs[0]), len(words[0]))
+            # assert len(xs[0]) == len(words[0]), (len(xs[0]), len(words[0]))
 
             # get index of non-zero length samples
             nonzero_idx = list(filter(lambda i: len(ys[0][i]) > 0, range(len(ys[0]))))
@@ -333,6 +335,8 @@ class LoadInputsAndTargets(object):
             y_names = list(y_feats_dict.keys())
 
             # Keeping x_name and y_name, e.g. input1, for future extension
+            # the problem is here, I think
+            # maybe it's because 
             return_batch = OrderedDict(
                 [
                     *[(x_name, x) for x_name, x in zip(x_names, xs)],
@@ -341,7 +345,10 @@ class LoadInputsAndTargets(object):
                 ]
             )
         else:
+            # There is no need to load word mask here, MAYBE?
             return_batch = OrderedDict([(x_name, x) for x_name, x in zip(x_names, xs)])
+        
+        # assert return_batch==0, return_batch['input1'][1]
         return return_batch, uttid_list
 
     def _create_batch_mt(self, x_feats_dict, y_feats_dict, uttid_list):
