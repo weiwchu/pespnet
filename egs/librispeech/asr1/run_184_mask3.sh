@@ -8,8 +8,8 @@
 
 # general configuration
 backend=pytorch
-stage=4       # start from -1 if you need to start from data download
-stop_stage=4
+stage=5       # start from -1 if you need to start from data download
+stop_stage=5
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
 debugmode=1
@@ -277,7 +277,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
 
     pids=() # initialize pids
     for rtask in ${recog_set}; do
-    (
+    # (
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})_${lmtag}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
@@ -302,10 +302,10 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
 
-    ) &
-    pids+=($!) # store background pids
+    # ) &
+    # pids+=($!) # store background pids
     done
-    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
-    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+    # i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    # [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished"
 fi

@@ -145,6 +145,8 @@ class Transformation(object):
                         xs = [func(x, u, **_kwargs) for x, u in zip(xs, uttid_list)]
                     elif words is not None and "w" in param:
                         xs, w = map(list, zip(*[func(x, w, **_kwargs) for x, w in zip(xs, words)]))
+                    elif words is None and "w" in param:
+                        xs, _ = map(list, zip(*[func(x, None, **_kwargs) for x in xs]))
                     else:
                         xs = [func(x, **_kwargs) for x in xs]
                 except Exception:

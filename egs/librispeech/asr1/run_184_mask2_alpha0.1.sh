@@ -8,7 +8,7 @@
 
 # general configuration
 backend=pytorch
-stage=5       # start from -1 if you need to start from data download
+stage=4       # start from -1 if you need to start from data download
 stop_stage=5
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
@@ -21,8 +21,8 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/wordmask1_specaug.yaml
-train_config=conf/train_ngpu4_bm.yaml # current default recipe requires 4 gpus.
+preprocess_config=conf/wordmask2_specaug.yaml
+train_config=conf/train_ngpu4_bm_alpha0.1.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -218,7 +218,7 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    CUDA_VISIBLE_DEVICES=0,1,2,3 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+    CUDA_VISIBLE_DEVICES=4,5,6,7 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
@@ -277,7 +277,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
 
     pids=() # initialize pids
     for rtask in ${recog_set}; do
-    # (
+    (
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})_${lmtag}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
@@ -302,10 +302,10 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
 
-    # ) &
-    # pids+=($!) # store background pids
+    ) &
+    pids+=($!) # store background pids
     done
-    # i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
-    # [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished"
 fi
