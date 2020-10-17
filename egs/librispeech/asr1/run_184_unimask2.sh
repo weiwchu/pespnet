@@ -8,9 +8,9 @@
 
 # general configuration
 backend=pytorch
-stage=5       # start from -1 if you need to start from data download
-stop_stage=100
-ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+stage=2       # start from -1 if you need to start from data download
+stop_stage=5
+ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
 debugmode=1
 dumpdir=dump   # directory to dump full features
@@ -21,8 +21,8 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/specaug.yaml
-train_config=conf/train_ngpu4.yaml # current default recipe requires 4 gpus.
+preprocess_config=conf/uniwordmask2_specaug.yaml
+train_config=conf/train_ngpu8.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -47,7 +47,11 @@ use_lm_valbest_average=false # if true, the validation `lm_n_average`-best langu
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
 datadir=/export/a15/vpanayotov/data
-
+alidir=/NAS5/speech/user/wchu/data/align/LibriSpeech
+# arpa_lm_file=/NAS5/speech/data/lmtext/librispeech/3-gram.pruned.3e-7.arpa
+# arpa_lm_file=/NAS5/speech/data/lmtext/librispeech/3-gram.arpa
+arpa_lm_file=/NAS5/speech/data/lmtext/librispeech/4-gram.arpa
+vocab_file=/NAS5/speech/data/lmtext/librispeech/librispeech-vocab.txt
 # base url for downloads.
 data_url=www.openslr.org/resources/12
 
@@ -140,24 +144,25 @@ bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
 echo "dictionary: ${dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
+
     echo "stage 2: Dictionary and Json Data Preparation"
-    mkdir -p data/lang_char/
-    echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
-    cut -f 2- -d" " data/${train_set}/text > data/lang_char/input.txt
-    spm_train --input=data/lang_char/input.txt --vocab_size=${nbpe} --model_type=${bpemode} --model_prefix=${bpemodel} --input_sentence_size=100000000
-    spm_encode --model=${bpemodel}.model --output_format=piece < data/lang_char/input.txt | tr ' ' '\n' | sort | uniq | awk '{print $0 " " NR+1}' >> ${dict}
-    wc -l ${dict}
+    # mkdir -p data/lang_char/
+    # echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
+    # cut -f 2- -d" " data/${train_set}/text > data/lang_char/input.txt
+    # spm_train --input=data/lang_char/input.txt --vocab_size=${nbpe} --model_type=${bpemode} --model_prefix=${bpemodel} --input_sentence_size=100000000
+    # spm_encode --model=${bpemodel}.model --output_format=piece < data/lang_char/input.txt | tr ' ' '\n' | sort | uniq | awk '{print $0 " " NR+1}' >> ${dict}
+    # wc -l ${dict}
 
     # make json labels
-    data2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_set} ${dict} > ${feat_tr_dir}/data_${bpemode}${nbpe}.json
-    data2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_dev} ${dict} > ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+    uniworddata2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
+        data/${train_set} ${dict} ${alidir}/${train_set} > ${feat_tr_dir}/probword_data_${bpemode}${nbpe}.json
+    uniworddata2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
+        data/${train_dev} ${dict} ${alidir}/${train_dev} > ${feat_dt_dir}/probword_data_${bpemode}${nbpe}.json
 
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        data2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
-            data/${rtask} ${dict} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+        uniworddata2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
+            data/${rtask} ${dict} ${alidir}/${rtask} > ${feat_recog_dir}/probword_data_${bpemode}${nbpe}.json
     done
 fi
 
@@ -169,36 +174,36 @@ lmexpname=train_rnnlm_${backend}_${lmtag}_${bpemode}${nbpe}_ngpu${ngpu}
 lmexpdir=exp/${lmexpname}
 mkdir -p ${lmexpdir}
 
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
-    echo "stage 3: LM Preparation"
-    lmdatadir=data/local/lm_train_${bpemode}${nbpe}
-    # use external data
-    if [ ! -e data/local/lm_train/librispeech-lm-norm.txt.gz ]; then
-        wget http://www.openslr.org/resources/11/librispeech-lm-norm.txt.gz -P data/local/lm_train/
-    fi
-    if [ ! -e ${lmdatadir} ]; then
-        mkdir -p ${lmdatadir}
-        cut -f 2- -d" " data/${train_set}/text | gzip -c > data/local/lm_train/${train_set}_text.gz
-        # combine external text and transcriptions and shuffle them with seed 777
-        zcat data/local/lm_train/librispeech-lm-norm.txt.gz data/local/lm_train/${train_set}_text.gz |\
-            spm_encode --model=${bpemodel}.model --output_format=piece > ${lmdatadir}/train.txt
-        cut -f 2- -d" " data/${train_dev}/text | spm_encode --model=${bpemodel}.model --output_format=piece \
-                                                            > ${lmdatadir}/valid.txt
-    fi
-    ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
-        lm_train.py \
-        --config ${lm_config} \
-        --ngpu ${ngpu} \
-        --backend ${backend} \
-        --verbose 1 \
-        --outdir ${lmexpdir} \
-        --tensorboard-dir tensorboard/${lmexpname} \
-        --train-label ${lmdatadir}/train.txt \
-        --valid-label ${lmdatadir}/valid.txt \
-        --resume ${lm_resume} \
-        --dict ${dict} \
-        --dump-hdf5-path ${lmdatadir}
-fi
+# if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
+#     echo "stage 3: LM Preparation"
+#     lmdatadir=data/local/lm_train_${bpemode}${nbpe}
+#     # use external data
+#     if [ ! -e data/local/lm_train/librispeech-lm-norm.txt.gz ]; then
+#         wget http://www.openslr.org/resources/11/librispeech-lm-norm.txt.gz -P data/local/lm_train/
+#     fi
+#     if [ ! -e ${lmdatadir} ]; then
+#         mkdir -p ${lmdatadir}
+#         cut -f 2- -d" " data/${train_set}/text | gzip -c > data/local/lm_train/${train_set}_text.gz
+#         # combine external text and transcriptions and shuffle them with seed 777
+#         zcat data/local/lm_train/librispeech-lm-norm.txt.gz data/local/lm_train/${train_set}_text.gz |\
+#             spm_encode --model=${bpemodel}.model --output_format=piece > ${lmdatadir}/train.txt
+#         cut -f 2- -d" " data/${train_dev}/text | spm_encode --model=${bpemodel}.model --output_format=piece \
+#                                                             > ${lmdatadir}/valid.txt
+#     fi
+#     ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
+#         lm_train.py \
+#         --config ${lm_config} \
+#         --ngpu ${ngpu} \
+#         --backend ${backend} \
+#         --verbose 1 \
+#         --outdir ${lmexpdir} \
+#         --tensorboard-dir tensorboard/${lmexpname} \
+#         --train-label ${lmdatadir}/train.txt \
+#         --valid-label ${lmdatadir}/valid.txt \
+#         --resume ${lm_resume} \
+#         --dict ${dict} \
+#         --dump-hdf5-path ${lmdatadir}
+# fi
 
 if [ -z ${tag} ]; then
     expname=${train_set}_${backend}_$(basename ${train_config%.*})
@@ -216,7 +221,7 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
@@ -230,8 +235,8 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --minibatches ${N} \
         --verbose ${verbose} \
         --resume ${resume} \
-        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+        --train-json ${feat_tr_dir}/probword_data_${bpemode}${nbpe}.json \
+        --valid-json ${feat_dt_dir}/probword_data_${bpemode}${nbpe}.json
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
@@ -274,7 +279,6 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     fi
 
     pids=() # initialize pids
-    i=0
     for rtask in ${recog_set}; do
     # (
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})_${lmtag}
@@ -287,17 +291,12 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
-        echo $i
-        if [ $rtask == 'test-clean' ]; then
-            continue
-        fi
-        # (
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             asr_recog.py \
             --config ${decode_config} \
             --ngpu ${ngpu} \
             --backend ${backend} \
-            --batchsize 1 \
+            --batchsize 0 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
@@ -305,12 +304,11 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --api v2
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
-        # ) &
-        i=$(( $i + 1 ))
+
     # ) &
     # pids+=($!) # store background pids
     done
-    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
-    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+    # i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    # [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished"
 fi

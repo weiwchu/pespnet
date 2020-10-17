@@ -147,15 +147,9 @@ do
 done < ${tmpdir}/word/align_txt.lst
 
 awk '{print $1}' ${dir}/utt2spk >${tmpdir}/word/utt
-# python ../../../utils/align_to_word_info.py \
-#     --align-info-list ${tmpdir}/word/align_txt.lst \
-#     --utt-list-file ${tmpdir}/word/utt >${tmpdir}/word/words.scp
-python ../../../utils/align_to_probword_info.py \
+python ../../../utils/align_to_word_info.py \
     --align-info-list ${tmpdir}/word/align_txt.lst \
-    --utt-list-file ${tmpdir}/word/utt \
-    --arpa-lm-file $arpa_lm_file \
-    --vocab-file $vocab_file \
-    --ngram-count 4 >${tmpdir}/word/words.scp
+    --utt-list-file ${tmpdir}/word/utt >${tmpdir}/word/words.scp
 
 # 5. Merge scp files into a JSON file
 opts=""

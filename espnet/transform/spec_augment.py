@@ -185,9 +185,28 @@ def prob_word_mask(spec, word, n_mask=1, replace_with_zero=True, inplace=False):
     len_spectro = cloned.shape[0]
     
     mu = cloned.mean()
-    wordprobs = [ prob for start_frame, end_frame, prob in word ]
-    # wordprobs is now all 1.0
-    for id in numpy.random.choice(numpy.arange(len(wordprobs)), n_mask, wordprobs).tolist():
+    
+    totalprob = 0
+    floorprob = 1e-5
+    valid_words = []
+    for idx, (start_frame, end_frame, prob) in enumerate(word):
+        if prob > floorprob:
+            totalprob += prob
+            valid_words.append((idx, start_frame, end_frame, prob))
+    valid_ids = [ idx for idx, _, _, _ in valid_words ]
+    if len(valid_words) <= n_mask:
+        remain_ids = valid_ids
+    else:
+        if totalprob < floorprob:
+            valid_probs = [ 1.0/len(valid_words) for _, _, _, prob in valid_words]
+        else:
+            valid_probs = [ prob/totalprob for _, _, _, prob in valid_words ]
+        exclude_ids = numpy.random.choice(numpy.asarray(valid_ids), len(valid_words) - n_mask, replace=False, p=valid_probs).tolist()
+        remain_ids = []
+        for id in valid_ids:
+            if id not in exclude_ids:
+                remain_ids.append(id)
+    for id in remain_ids:
         s, e, _ = word[id]
         if replace_with_zero:
             cloned[s:e] = 0

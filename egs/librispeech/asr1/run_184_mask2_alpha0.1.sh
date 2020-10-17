@@ -218,6 +218,7 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
+    resume=$expdir/results/snapshot.ep.79
     CUDA_VISIBLE_DEVICES=4,5,6,7 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \

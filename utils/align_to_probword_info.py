@@ -37,6 +37,12 @@ def get_parser():
         help="The utterence list file",
     )
     parser.add_argument(
+        "--vocab-file",
+        type=str,
+        default=None,
+        help="The vocabulary file",
+    )
+    parser.add_argument(
         "--ngram-count",
         type=str,
         default=None,
@@ -71,6 +77,11 @@ def main():
     lm = models[0]
     ngram_count = int(args.ngram_count)
 
+    hvocab = {}
+    with open(args.vocab_file) as f:
+        for w in f.readlines():
+            hvocab[w.strip()] = 1
+
     hwords = {}
     with open(args.align_info_list) as f:
         for align_info_file in f.readlines():
@@ -87,18 +98,21 @@ def main():
                     for word, end_time in zip(words, end_times):
                         if word == '':
                             if is_in_sentence is True:
-                                word = '</S>'
+                                word = '</s>'
                             else:
-                                word = '<S>'
+                                word = '<s>'
                                 is_in_sentence = True
+                        elif word not in hvocab:
+                            word = '<UNK>'
                         word_history.append(word)
                         if len(word_history) > ngram_count:
-                            word_history.pop()
+                            word_history.pop(0)
                         word_history_str = " ".join(word_history)
                         logp = lm.log_p(word_history_str)
-                        if word == '</S>':
-                            word_history = ['<S>']
+                        if word == '</s>':
+                            word_history = ['<s>']
                             is_in_sentence = True
+                        
                         end_time = float(end_time)
                         word_info.append((word, start_time, end_time, logp))
                         start_time = end_time
@@ -116,13 +130,17 @@ def main():
                 # uttid (0.0 0.20 1.0 '') (0.20 0.78 1.0 'WE')
                 sum_logp = -100.0
                 for word, start_time, end_time, logp in hwords[uttid]:
-                    if word != '<S>' and word != '</S>':
+                    if word != '<s>' and word != '</s>':
                         sum_logp = np.logaddexp(sum_logp, logp)
                 for word, start_time, end_time, logp in hwords[uttid]:
-                    if word != '<S>' and word != '</S>':
+                    if word != '<s>' and word != '</s>':
                         prob = np.exp(logp - sum_logp)
                     else:
                         prob = 0.0
+                    if word == '<s>' or word == '</s>':
+                        word = ''
+                    elif word == '<UNK>':
+                        word = '<unk>'
                     args.out.write(" {:d},{:d},{:.4f},{}".format(int(start_time*100), int(end_time*100), prob, word))
             else:
                 # no valid alignment
