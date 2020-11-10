@@ -8,7 +8,7 @@
 
 # general configuration
 backend=pytorch
-stage=4       # start from -1 if you need to start from data download
+stage=5       # start from -1 if you need to start from data download
 stop_stage=5
 ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
@@ -173,12 +173,12 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 fi
 
 # # You can skip this and remove --rnnlm option in the recognition (stage 5)
-# if [ -z ${lmtag} ]; then
-#     lmtag=$(basename ${lm_config%.*})
-# fi
-# lmexpname=train_rnnlm_${backend}_${lmtag}_${bpemode}${nbpe}_ngpu${ngpu}
-# lmexpdir=exp/${lmexpname}
-# mkdir -p ${lmexpdir}
+if [ -z ${lmtag} ]; then
+    lmtag=$(basename ${lm_config%.*})
+fi
+lmexpname=train_rnnlm_${backend}_${lmtag}_${bpemode}${nbpe}_ngpu${ngpu}
+lmexpdir=exp/${lmexpname}
+mkdir -p ${lmexpdir}
 
 # if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
 #     echo "stage 3: LM Preparation"
@@ -304,6 +304,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --backend ${backend} \
             --batchsize 0 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
             --rnnlm ${lmexpdir}/${lang_model} \

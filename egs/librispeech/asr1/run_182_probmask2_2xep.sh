@@ -8,21 +8,21 @@
 
 # general configuration
 backend=pytorch
-stage=2       # start from -1 if you need to start from data download
+stage=4       # start from -1 if you need to start from data download
 stop_stage=5
-ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
-resume=exp/train_960_pytorch_train_ngpu8_uniwordmask2_specaug/results/snapshot.ep.42        # Resume the training from snapshot
+resume=exp/train_960_pytorch_train_ngpu4_2xep_probwordmask2_specaug/results/snapshot.ep.195        # Resume the training from snapshot
 
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/uniwordmask2_specaug.yaml
-train_config=conf/train_ngpu8.yaml # current default recipe requires 4 gpus.
+preprocess_config=conf/probwordmask2_specaug.yaml
+train_config=conf/train_ngpu4_2xep.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -139,6 +139,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     done
 fi
 
+
 dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
 bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
 echo "dictionary: ${dict}"
@@ -154,19 +155,24 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     # wc -l ${dict}
 
     # make json labels
-    uniworddata2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_set} ${dict} ${alidir}/${train_set} > ${feat_tr_dir}/probword_data_${bpemode}${nbpe}.json
-    uniworddata2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_dev} ${dict} ${alidir}/${train_dev} > ${feat_dt_dir}/probword_data_${bpemode}${nbpe}.json
+    probworddata2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
+        --arpa-lm-file $arpa_lm_file --vocab-file $vocab_file \
+        data/${train_set} ${dict} ${alidir}/${train_set} > ${feat_tr_dir}/probwordmask_data_${bpemode}${nbpe}.json
+    probworddata2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
+        --arpa-lm-file $arpa_lm_file --vocab-file $vocab_file \
+        data/${train_dev} ${dict} ${alidir}/${train_dev} > ${feat_dt_dir}/probwordmask_data_${bpemode}${nbpe}.json
 
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        uniworddata2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
-            data/${rtask} ${dict} ${alidir}/${rtask} > ${feat_recog_dir}/probword_data_${bpemode}${nbpe}.json
+        probworddata2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
+            --arpa-lm-file $arpa_lm_file \
+            --vocab-file $vocab_file \
+            data/${rtask} ${dict} ${alidir}/${rtask} > ${feat_recog_dir}/probwordmask_data_${bpemode}${nbpe}.json
+        echo ${feat_recog_dir}/probwordmask_data_${bpemode}${nbpe}.json 
     done
 fi
 
-# You can skip this and remove --rnnlm option in the recognition (stage 5)
+# # You can skip this and remove --rnnlm option in the recognition (stage 5)
 if [ -z ${lmtag} ]; then
     lmtag=$(basename ${lm_config%.*})
 fi
@@ -221,7 +227,7 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+    CUDA_VISIBLE_DEVICES=0,1,2,3 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
@@ -235,8 +241,8 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --minibatches ${N} \
         --verbose ${verbose} \
         --resume ${resume} \
-        --train-json ${feat_tr_dir}/probword_data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/probword_data_${bpemode}${nbpe}.json
+        --train-json ${feat_tr_dir}/probwordmask_data_${bpemode}${nbpe}.json \
+        --valid-json ${feat_dt_dir}/probwordmask_data_${bpemode}${nbpe}.json
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
@@ -298,6 +304,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --backend ${backend} \
             --batchsize 0 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
             --rnnlm ${lmexpdir}/${lang_model} \
