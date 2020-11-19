@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# only run on 100h or librispeech
+
 # Copyright 2017 Johns Hopkins University (Shinji Watanabe)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
@@ -8,10 +10,10 @@
 
 # general configuration
 backend=pytorch
-stage=2       # start from -1 if you need to start from data download
+stage=4       # start from -1 if you need to start from data download
 stop_stage=5
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=23
+nj=24
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
@@ -21,8 +23,8 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/probwordmask2_specaug.yaml
-train_config=conf/train_ngpu8.yaml # current default recipe requires 4 gpus.
+preprocess_config=conf/specaug.yaml
+train_config=conf/train_s1_ngpu4.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -46,12 +48,8 @@ use_lm_valbest_average=false # if true, the validation `lm_n_average`-best langu
 # Set this to somewhere where you want to put your data, or where
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
-datadir=/export/a15/vpanayotov/data
-alidir=/NAS5/speech/user/wchu/data/align/LibriSpeech
-# arpa_lm_file=/NAS5/speech/data/lmtext/librispeech/3-gram.pruned.3e-7.arpa
-# arpa_lm_file=/NAS5/speech/data/lmtext/librispeech/3-gram.arpa
-arpa_lm_file=/NAS5/speech/data/lmtext/librispeech/4-gram.arpa
-vocab_file=/NAS5/speech/data/lmtext/librispeech/librispeech-vocab.txt
+datadir=/data/nas1/user/wchu/data/speech
+
 # base url for downloads.
 data_url=www.openslr.org/resources/12
 
@@ -70,9 +68,9 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_960
+train_set=train_clean_100
 train_dev=dev
-recog_set="test_clean test_other dev_clean dev_other"
+recog_set="test_clean dev_clean"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
@@ -97,25 +95,29 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 1: Feature Generation"
-    fbankdir=fbank
-    # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
-    for x in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
-        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} ${fbankdir}
-        utils/fix_data_dir.sh data/${x}
-    done
 
-    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
-    utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
+    # fbankdir=fbank
+    # # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
+    # for x in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+    #     steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
+    #         data/${x} exp/make_fbank/${x} ${fbankdir}
+    #     utils/fix_data_dir.sh data/${x}
+    # done
+
+    # utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
+    # utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
 
     # remove utt having more than 3000 frames
     # remove utt having more than 400 characters
+    if [ ! -d data/${train_set}_org ]; then
+        cp -r data/${train_set} data/${train_set}_org
+    fi
     remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_set}_org data/${train_set}
     remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_dev}_org data/${train_dev}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
-
+    
     # dump features for training
     if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
     utils/create_split_dir.pl \
@@ -139,40 +141,35 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     done
 fi
 
-
-dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
-bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
-echo "dictionary: ${dict}"
-if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
+# use fixed exisitng word piece
+dict=data/lang_char/train_960_${bpemode}${nbpe}_units.txt
+bpemodel=data/lang_char/train_960_${bpemode}${nbpe}
+echo "dictionary: ${dict}, stage: $stage"
+if [ ${stage} -le 20 ] && [ ${stop_stage} -ge 20 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
-
     echo "stage 2: Dictionary and Json Data Preparation"
-    # mkdir -p data/lang_char/
-    # echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
-    # cut -f 2- -d" " data/${train_set}/text > data/lang_char/input.txt
-    # spm_train --input=data/lang_char/input.txt --vocab_size=${nbpe} --model_type=${bpemode} --model_prefix=${bpemodel} --input_sentence_size=100000000
-    # spm_encode --model=${bpemodel}.model --output_format=piece < data/lang_char/input.txt | tr ' ' '\n' | sort | uniq | awk '{print $0 " " NR+1}' >> ${dict}
-    # wc -l ${dict}
+    exit
+    mkdir -p data/lang_char/
+    echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
+    cut -f 2- -d" " data/${train_set}/text > data/lang_char/input.txt
+    spm_train --input=data/lang_char/input.txt --vocab_size=${nbpe} --model_type=${bpemode} --model_prefix=${bpemodel} --input_sentence_size=100000000
+    spm_encode --model=${bpemodel}.model --output_format=piece < data/lang_char/input.txt | tr ' ' '\n' | sort | uniq | awk '{print $0 " " NR+1}' >> ${dict}
+    wc -l ${dict}
 
     # make json labels
-    probworddata2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
-        --arpa-lm-file $arpa_lm_file --vocab-file $vocab_file \
-        data/${train_set} ${dict} ${alidir}/${train_set} > ${feat_tr_dir}/probwordmask_data_${bpemode}${nbpe}.json
-    probworddata2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
-        --arpa-lm-file $arpa_lm_file --vocab-file $vocab_file \
-        data/${train_dev} ${dict} ${alidir}/${train_dev} > ${feat_dt_dir}/probwordmask_data_${bpemode}${nbpe}.json
+    data2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
+        data/${train_set} ${dict} > ${feat_tr_dir}/data_${bpemode}${nbpe}.json
+    data2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
+        data/${train_dev} ${dict} > ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        probworddata2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
-            --arpa-lm-file $arpa_lm_file \
-            --vocab-file $vocab_file \
-            data/${rtask} ${dict} ${alidir}/${rtask} > ${feat_recog_dir}/probwordmask_data_${bpemode}${nbpe}.json
-        echo ${feat_recog_dir}/probwordmask_data_${bpemode}${nbpe}.json 
+        data2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
+            data/${rtask} ${dict} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
     done
 fi
 
-# # You can skip this and remove --rnnlm option in the recognition (stage 5)
+# You can skip this and remove --rnnlm option in the recognition (stage 5)
 if [ -z ${lmtag} ]; then
     lmtag=$(basename ${lm_config%.*})
 fi
@@ -227,7 +224,7 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
@@ -241,8 +238,8 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --minibatches ${N} \
         --verbose ${verbose} \
         --resume ${resume} \
-        --train-json ${feat_tr_dir}/probwordmask_data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/probwordmask_data_${bpemode}${nbpe}.json
+        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
+        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
@@ -305,7 +302,6 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --batchsize 0 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
-            --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
             --rnnlm ${lmexpdir}/${lang_model} \
             --api v2
@@ -315,7 +311,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     # ) &
     # pids+=($!) # store background pids
     done
-    # i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
-    # [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished"
 fi
