@@ -8,10 +8,10 @@
 
 # general configuration
 backend=pytorch
-stage=5       # start from -1 if you need to start from data download
+stage=2       # start from -1 if you need to start from data download
 stop_stage=5
-ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=32
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=23
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
