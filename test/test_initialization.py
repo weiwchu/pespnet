@@ -1,16 +1,11 @@
-# coding: utf-8
-
 # Copyright 2017 Shigeki Karita
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
-
-
 import argparse
-
-import numpy
 import os
-import pytest
 import random
 
+import numpy
+import torch
 
 args = argparse.Namespace(
     elayers=4,
@@ -18,6 +13,7 @@ args = argparse.Namespace(
     etype="vggblstmp",
     eunits=320,
     eprojs=320,
+    dtype="lstm",
     dlayers=2,
     dunits=300,
     atype="location",
@@ -26,32 +22,43 @@ args = argparse.Namespace(
     mtlalpha=0.5,
     lsm_type="",
     lsm_weight=0.0,
+    sampling_probability=0.0,
     adim=320,
     dropout_rate=0.0,
+    dropout_rate_decoder=0.0,
     beam_size=3,
     penalty=0.5,
     maxlenratio=1.0,
     minlenratio=0.0,
     ctc_weight=0.2,
     verbose=True,
-    char_list=[u"あ", u"い", u"う", u"え", u"お"],
+    char_list=["あ", "い", "う", "え", "お"],
     outdir=None,
-    seed=1
+    seed=1,
+    ctc_type="warpctc",
+    report_cer=False,
+    report_wer=False,
+    sym_space="<space>",
+    sym_blank="<blank>",
+    context_residual=False,
+    use_frontend=False,
+    replace_sos=False,
+    tgt_lang=False,
 )
 
 
 def test_lecun_init_torch():
-    torch = pytest.importorskip("torch")
     nseed = args.seed
     random.seed(nseed)
     torch.manual_seed(nseed)
     numpy.random.seed(nseed)
     os.environ["CHAINER_SEED"] = str(nseed)
-    import e2e_asr_attctc_th as m
-    model = m.Loss(m.E2E(40, 5, args), 0.5)
-    b = model.predictor.ctc.ctc_lo.bias.data.numpy()
+    import espnet.nets.pytorch_backend.e2e_asr as m
+
+    model = m.E2E(40, 5, args)
+    b = model.ctc.ctc_lo.bias.data.numpy()
     assert numpy.all(b == 0.0)
-    w = model.predictor.ctc.ctc_lo.weight.data.numpy()
+    w = model.ctc.ctc_lo.weight.data.numpy()
     numpy.testing.assert_allclose(w.mean(), 0.0, 1e-2, 1e-2)
     numpy.testing.assert_allclose(w.var(), 1.0 / w.shape[1], 1e-2, 1e-2)
 
@@ -61,16 +68,17 @@ def test_lecun_init_torch():
         if "embed" in name:
             numpy.testing.assert_allclose(data.mean(), 0.0, 5e-2, 5e-2)
             numpy.testing.assert_allclose(data.var(), 1.0, 5e-2, 5e-2)
-        elif "predictor.dec.decoder.0.bias_ih" in name:
+        elif "dec.decoder.0.bias_ih" in name:
             assert data.sum() == data.size // 4
-        elif "predictor.dec.decoder.1.bias_ih" in name:
+        elif "dec.decoder.1.bias_ih" in name:
             assert data.sum() == data.size // 4
         elif data.ndim == 1:
             assert numpy.all(data == 0.0)
         else:
             numpy.testing.assert_allclose(data.mean(), 0.0, 5e-2, 5e-2)
             numpy.testing.assert_allclose(
-                data.var(), 1.0 / numpy.prod(data.shape[1:]), 5e-2, 5e-2)
+                data.var(), 1.0 / numpy.prod(data.shape[1:]), 5e-2, 5e-2
+            )
 
 
 def test_lecun_init_chainer():
@@ -78,20 +86,21 @@ def test_lecun_init_chainer():
     random.seed(nseed)
     numpy.random.seed(nseed)
     os.environ["CHAINER_SEED"] = str(nseed)
-    import e2e_asr_attctc as m
-    model = m.Loss(m.E2E(40, 5, args), 0.5)
-    b = model.predictor.ctc.ctc_lo.b.data
+    import espnet.nets.chainer_backend.e2e_asr as m
+
+    model = m.E2E(40, 5, args)
+    b = model.ctc.ctc_lo.b.data
     assert numpy.all(b == 0.0)
-    w = model.predictor.ctc.ctc_lo.W.data
+    w = model.ctc.ctc_lo.W.data
     numpy.testing.assert_allclose(w.mean(), 0.0, 1e-2, 1e-2)
     numpy.testing.assert_allclose(w.var(), 1.0 / w.shape[1], 1e-2, 1e-2)
 
     for name, p in model.namedparams():
         print(name)
         data = p.data
-        if "lstm0/upward/b" in name:
+        if "rnn0/upward/b" in name:
             assert data.sum() == data.size // 4
-        elif "lstm1/upward/b" in name:
+        elif "rnn1/upward/b" in name:
             assert data.sum() == data.size // 4
         elif "embed" in name:
             numpy.testing.assert_allclose(data.mean(), 0.0, 5e-2, 5e-2)
@@ -101,4 +110,5 @@ def test_lecun_init_chainer():
         else:
             numpy.testing.assert_allclose(data.mean(), 0.0, 5e-2, 5e-2)
             numpy.testing.assert_allclose(
-                data.var(), 1.0 / numpy.prod(data.shape[1:]), 5e-2, 5e-2)
+                data.var(), 1.0 / numpy.prod(data.shape[1:]), 5e-2, 5e-2
+            )

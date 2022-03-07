@@ -3,15 +3,15 @@
 # Copyright 2018 Hiroshi Seki
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
-import lm_pytorch
-
-import lm_chainer
-
 import argparse
-import importlib
-import numpy
 
+import numpy
 import pytest
+import torch
+
+import espnet.lm.pytorch_backend.extlm as extlm_pytorch
+from espnet.nets.pytorch_backend import e2e_asr
+import espnet.nets.pytorch_backend.lm.default as lm_pytorch
 
 
 def make_arg(**kwargs):
@@ -21,6 +21,7 @@ def make_arg(**kwargs):
         etype="blstmp",
         eunits=100,
         eprojs=100,
+        dtype="lstm",
         dlayers=1,
         dunits=300,
         atype="location",
@@ -29,18 +30,30 @@ def make_arg(**kwargs):
         mtlalpha=0.5,
         lsm_type="",
         lsm_weight=0.0,
+        sampling_probability=0.0,
         adim=320,
         dropout_rate=0.0,
+        dropout_rate_decoder=0.0,
         nbest=5,
         beam_size=3,
         penalty=0.5,
         maxlenratio=1.0,
         minlenratio=0.0,
         ctc_weight=0.2,
+        ctc_window_margin=0,
         verbose=2,
         char_list=["a", "i", "u", "e", "o"],
+        word_list=["<blank>", "<unk>", "ai", "iu", "ue", "eo", "oa", "<eos>"],
         outdir=None,
-        ctc_type="chainer"
+        ctc_type="warpctc",
+        report_cer=False,
+        report_wer=False,
+        sym_space="<space>",
+        sym_blank="<blank>",
+        context_residual=False,
+        use_frontend=False,
+        replace_sos=False,
+        tgt_lang=False,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -51,97 +64,91 @@ def init_torch_weight_const(m, val):
         p.data.fill_(val)
 
 
+def init_torch_weight_random(m, rand_range):
+    for name, p in m.named_parameters():
+        p.data.uniform_(rand_range[0], rand_range[1])
+        # set small bias for <blank> output
+        if "wordlm.lo.bias" in name or "dec.output.bias" in name:
+            p.data[0] = -10.0
+
+
 def init_chainer_weight_const(m, val):
     for p in m.params():
         p.data[:] = val
 
 
-@pytest.mark.parametrize(("etype", "m_str", "text_idx1"), [
-    ("blstmp", "e2e_asr_attctc", 0),
-    ("blstmp", "e2e_asr_attctc_th", 1),
-    ("vggblstmp", "e2e_asr_attctc", 2),
-    ("vggblstmp", "e2e_asr_attctc_th", 3),
-])
-def test_recognition_results(etype, m_str, text_idx1):
-    const = 1e-4
+def make_small_arg(**kwargs):
+    return make_arg(
+        elayers=1,
+        subsample="1_1",
+        etype="lstm",
+        eunits=2,
+        eprojs=2,
+        dtype="lstm",
+        dlayers=1,
+        dunits=2,
+        atype="dot",
+        adim=2,
+        rnnlm="dummy",
+        lm_weight=0.3,
+        **kwargs
+    )
+
+
+# ctc_weight: 0.0 (attention), 0.5 (hybrid CTC/attention), 1.0 (CTC)
+@pytest.mark.parametrize("ctc_weight", [0.0, 0.5, 1.0])
+def test_batch_beam_search(ctc_weight):
     numpy.random.seed(1)
-    seq_true_texts = ([["o", "iuiuiuiuiuiuiuiuo", "aiaiaiaiaiaiaiaio"],
-                       ["o", "uiuiuiuiuiuiuiuio", "aiaiaiaiaiaiaiaio"],
-                       ["o", "iuiuiuiuiuiuiuiuo", "aiaiaiaiaiaiaiaio"],
-                       ["o", "uiuiuiuiuiuiuiuio", "aiaiaiaiaiaiaiaio"]])
+    idim = 10
+    args = make_small_arg(ctc_weight=ctc_weight)
+    model = e2e_asr.E2E(idim, 5, args)
+    torch.manual_seed(1)
+    rnnlm = lm_pytorch.ClassifierWithState(lm_pytorch.RNNLM(len(args.char_list), 2, 2))
+    init_torch_weight_random(model, (-0.1, 0.1))
+    init_torch_weight_random(rnnlm, (-0.1, 0.1))
+    model.eval()
+    rnnlm.eval()
 
-    # ctc_weight: 0.0 (attention), 0.5 (hybrid CTC/attention), 1.0 (CTC)
-    for text_idx2, ctc_weight in enumerate([0.0, 0.5, 1.0]):
-        seq_true_text = seq_true_texts[text_idx1][text_idx2]
+    data = [("aaa", dict(feat=numpy.random.randn(10, idim).astype(numpy.float32)))]
+    in_data = data[0][1]["feat"]
 
-        args = make_arg(etype=etype, ctc_weight=ctc_weight)
-        m = importlib.import_module(m_str)
-        model = m.Loss(m.E2E(40, 5, args), 0.5)
+    s_nbest_hyps = model.recognize(in_data, args, args.char_list)
+    b_nbest_hyps = model.recognize_batch([in_data], args, args.char_list)
+    assert s_nbest_hyps[0]["yseq"] == b_nbest_hyps[0][0]["yseq"]
+    s_nbest_hyps = model.recognize(in_data, args, args.char_list, rnnlm)
+    b_nbest_hyps = model.recognize_batch([in_data], args, args.char_list, rnnlm)
+    assert s_nbest_hyps[0]["yseq"] == b_nbest_hyps[0][0]["yseq"]
 
-        if "_th" in m_str:
-            init_torch_weight_const(model, const)
-        else:
-            init_chainer_weight_const(model, const)
+    if ctc_weight > 0.0:
+        args.ctc_window_margin = 10
+        s_nbest_hyps = model.recognize(in_data, args, args.char_list, rnnlm)
+        b_nbest_hyps = model.recognize_batch([in_data], args, args.char_list, rnnlm)
+        assert s_nbest_hyps[0]["yseq"] == b_nbest_hyps[0][0]["yseq"]
 
-        data = [
-            ("aaa", dict(feat=numpy.random.randn(100, 40).astype(
-                numpy.float32), token=seq_true_text))
-        ]
+    # Test word LM in batch decoding
+    rand_range = (-0.01, 0.01)
+    torch.manual_seed(1)
+    char_list = ["<blank>", "<space>"] + args.char_list + ["<eos>"]
+    args = make_small_arg(
+        ctc_weight=ctc_weight,
+        ctc_window_margin=10,
+        beam_size=5,
+    )
+    model = e2e_asr.E2E(idim, len(char_list), args)
 
-        in_data = data[0][1]["feat"]
-        nbest_hyps = model.predictor.recognize(in_data, args, args.char_list)
-        y_hat = nbest_hyps[0]['yseq'][1:]
-        seq_hat = [args.char_list[int(idx)] for idx in y_hat]
-        seq_hat_text = "".join(seq_hat).replace('<space>', ' ')
-        seq_true_text = data[0][1]["token"]
+    char_dict = {x: i for i, x in enumerate(char_list)}
+    word_dict = {x: i for i, x in enumerate(args.word_list)}
 
-        assert seq_hat_text == seq_true_text
-
-
-@pytest.mark.parametrize(("etype", "m_str", "text_idx1"), [
-    ("blstmp", "e2e_asr_attctc", 0),
-    ("blstmp", "e2e_asr_attctc_th", 1),
-    ("vggblstmp", "e2e_asr_attctc", 2),
-    ("vggblstmp", "e2e_asr_attctc_th", 3),
-])
-def test_recognition_results_with_lm(etype, m_str, text_idx1):
-    const = 1e-4
-    numpy.random.seed(1)
-    seq_true_texts = [["o", "iuiuiuiuiuiuiuiuo", "aiaiaiaiaiaiaiaio"],
-                      ["o", "uiuiuiuiuiuiuiuio", "aiaiaiaiaiaiaiaio"],
-                      ["o", "iuiuiuiuiuiuiuiuo", "aiaiaiaiaiaiaiaio"],
-                      ["o", "uiuiuiuiuiuiuiuio", "aiaiaiaiaiaiaiaio"]]
-
-    # ctc_weight: 0.0 (attention), 0.5 (hybrid CTC/attention), 1.0 (CTC)
-    for text_idx2, ctc_weight in enumerate([0.0, 0.5, 1.0]):
-        seq_true_text = seq_true_texts[text_idx1][text_idx2]
-
-        args = make_arg(etype=etype, rnnlm="dummy", ctc_weight=ctc_weight,
-                        lm_weight=0.3)
-        m = importlib.import_module(m_str)
-        model = m.Loss(m.E2E(40, 5, args), 0.5)
-
-        if "_th" in m_str:
-            rnnlm = lm_pytorch.ClassifierWithState(
-                lm_pytorch.RNNLM(len(args.char_list), 10))
-            init_torch_weight_const(model, const)
-            init_torch_weight_const(rnnlm, const)
-        else:
-            rnnlm = lm_chainer.ClassifierWithState(
-                lm_chainer.RNNLM(len(args.char_list), 10))
-            init_chainer_weight_const(model, const)
-            init_chainer_weight_const(rnnlm, const)
-
-        data = [
-            ("aaa", dict(feat=numpy.random.randn(100, 40).astype(
-                numpy.float32), token=seq_true_text))
-        ]
-
-        in_data = data[0][1]["feat"]
-        nbest_hyps = model.predictor.recognize(in_data, args, args.char_list, rnnlm)
-        y_hat = nbest_hyps[0]['yseq'][1:]
-        seq_hat = [args.char_list[int(idx)] for idx in y_hat]
-        seq_hat_text = "".join(seq_hat).replace('<space>', ' ')
-        seq_true_text = data[0][1]["token"]
-
-        assert seq_hat_text == seq_true_text
+    word_rnnlm = lm_pytorch.ClassifierWithState(
+        lm_pytorch.RNNLM(len(args.word_list), 2, 2)
+    )
+    rnnlm = lm_pytorch.ClassifierWithState(
+        extlm_pytorch.LookAheadWordLM(word_rnnlm.predictor, word_dict, char_dict)
+    )
+    init_torch_weight_random(model, rand_range)
+    init_torch_weight_random(rnnlm, rand_range)
+    model.eval()
+    rnnlm.eval()
+    s_nbest_hyps = model.recognize(in_data, args, char_list, rnnlm)
+    b_nbest_hyps = model.recognize_batch([in_data], args, char_list, rnnlm)
+    assert s_nbest_hyps[0]["yseq"] == b_nbest_hyps[0][0]["yseq"]

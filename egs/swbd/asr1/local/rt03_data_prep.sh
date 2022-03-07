@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # RT-03 data preparation (conversational telephone speech part only)
 # Adapted from Arnab Ghoshal's script for Hub-5 Eval 2000 by Peng Qi
@@ -29,12 +29,12 @@ rtroot=$sdir
 tdir=$sdir/data/references/eval03/english/cts
 sdir=$sdir/data/audio/eval03/english/cts
 
-find $sdir -iname '*.sph' | sort > $dir/sph.flist
+find -L $sdir -iname '*.sph' | sort > $dir/sph.flist
 sed -e 's?.*/??' -e 's?.sph??' $dir/sph.flist | paste - $dir/sph.flist \
   > $dir/sph.scp
 
-sph2pipe=$KALDI_ROOT/tools/sph2pipe_v2.5/sph2pipe
-[ ! -x $sph2pipe ] \
+sph2pipe=sph2pipe
+! command -v "${sph2pipe}" &> /dev/null \
   && echo "Could not execute the sph2pipe program at $sph2pipe" && exit 1;
 
 awk -v sph2pipe=$sph2pipe '{
