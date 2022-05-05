@@ -30,4 +30,4 @@ cat << EOF > activate_python.sh
 EOF
 
 . ./activate_python.sh
-python3 -m pip install -U pip wheel
+python3 -m pip install -U pip wheel --user --prefix=
