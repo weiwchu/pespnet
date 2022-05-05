@@ -33,8 +33,11 @@ class FuncTrans(TransformInterface):
         self.kwargs = kwargs
         check_kwargs(self.func, kwargs)
 
-    def __call__(self, x):
-        return self.func(x, **self.kwargs)
+    def __call__(self, x, w = None):
+        if w is None:
+            return self.func(x, **self.kwargs)
+        else:
+            return self.func(x, w, **self.kwargs)
 
     @classmethod
     def add_arguments(cls, parser):

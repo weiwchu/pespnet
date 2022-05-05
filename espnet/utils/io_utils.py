@@ -106,7 +106,9 @@ class LoadInputsAndTargets(object):
         """
         x_feats_dict = OrderedDict()  # OrderedDict[str, List[np.ndarray]]
         y_feats_dict = OrderedDict()  # OrderedDict[str, List[np.ndarray]]
+        words_dict = OrderedDict()    # OrderedDict[str, List[np.ndarray]]
         uttid_list = []  # List[str]
+        probword_flag = False
 
         for uttid, info in batch:
             uttid_list.append(uttid)
@@ -121,7 +123,20 @@ class LoadInputsAndTargets(object):
                     x = self._get_from_loader(
                         filepath=inp["feat"], filetype=inp.get("filetype", "mat")
                     )
+                    inp["name"] = 'input1'
                     x_feats_dict.setdefault(inp["name"], []).append(x)
+                
+                if "word" in info:
+                    # {"word": [{"name": "word1", "words": "0,30,1.0000, 30,69,1.0000,TOM 69,77,1.0000, ...}])
+                    probword_flag = True
+                    for idx, inp in enumerate(info["word"]):
+                        words = []
+                        for s in inp["words"].split():
+                            startframe, endframe, prob, _ = s.split(',')
+                            w = (int(startframe), int(endframe), float(prob))
+                            words.append(w)
+                        words_dict.setdefault(inp["name"], []).append(words)
+
             # FIXME(kamo): Dirty way to load only speaker_embedding
             elif self.mode == "tts" and self.use_speaker_embedding:
                 for idx, inp in enumerate(info["input"]):
@@ -160,9 +175,14 @@ class LoadInputsAndTargets(object):
                     y_feats_dict.setdefault(inp["name"], []).append(x)
 
         if self.mode == "asr":
-            return_batch, uttid_list = self._create_batch_asr(
-                x_feats_dict, y_feats_dict, uttid_list
-            )
+            if probword_flag is False:
+                return_batch, uttid_list = self._create_batch_asr(
+                    x_feats_dict, y_feats_dict, uttid_list
+                )
+            else:
+                return_batch, uttid_list = self._create_batch_probword_asr(
+                    x_feats_dict, y_feats_dict, words_dict, uttid_list
+                )
         elif self.mode == "tts":
             _, info = batch[0]
             eos = int(info["output"][0]["shape"][1]) - 1
@@ -184,9 +204,14 @@ class LoadInputsAndTargets(object):
             # Apply pre-processing all input features
             for x_name in return_batch.keys():
                 if x_name.startswith("input"):
-                    return_batch[x_name] = self.preprocessing(
-                        return_batch[x_name], uttid_list, **self.preprocess_args
-                    )
+                    if 'word1' in return_batch.keys():
+                        return_batch[x_name] = self.preprocessing(
+                            return_batch[x_name], return_batch['word1'], uttid_list, **self.preprocess_args
+                        )
+                    else:
+                        return_batch[x_name] = self.preprocessing(
+                            return_batch[x_name], None, uttid_list, **self.preprocess_args
+                        )
 
         if return_uttid:
             return tuple(return_batch.values()), uttid_list
@@ -254,6 +279,80 @@ class LoadInputsAndTargets(object):
             )
         else:
             return_batch = OrderedDict([(x_name, x) for x_name, x in zip(x_names, xs)])
+        return return_batch, uttid_list
+
+    def _create_batch_probword_asr(self, x_feats_dict, y_feats_dict, words_dict, uttid_list):
+        """Create a OrderedDict for the mini-batch
+
+        :param OrderedDict x_feats_dict:
+            e.g. {"input1": [ndarray, ndarray, ...],
+                  "input2": [ndarray, ndarray, ...]}
+        :param OrderedDict y_feats_dict:
+            e.g. {"target1": [ndarray, ndarray, ...],
+                  "target2": [ndarray, ndarray, ...]}
+        :param OrderedDict words_dict:
+            e.g. {"words1": [(start_time, end_time, probability) ... ]}
+        :param: List[str] uttid_list:
+            Give uttid_list to sort in the same order as the mini-batch
+        :return: batch, uttid_list
+        :rtype: Tuple[OrderedDict, List[str]]
+        """
+        # handle single-input and multi-input (paralell) asr mode
+        xs = list(x_feats_dict.values())
+        words = list(words_dict.values())
+
+        if self.load_output:
+            ys = list(y_feats_dict.values())
+            assert len(xs[0]) == len(ys[0]), (len(xs[0]), len(ys[0]))
+            # assert len(xs[0]) == len(words[0]), (len(xs[0]), len(words[0]))
+
+            # get index of non-zero length samples
+            nonzero_idx = list(filter(lambda i: len(ys[0][i]) > 0, range(len(ys[0]))))
+            for n in range(1, len(y_feats_dict)):
+                nonzero_idx = filter(lambda i: len(ys[n][i]) > 0, nonzero_idx)
+        else:
+            # Note(kamo): Be careful not to make nonzero_idx to a generator
+            nonzero_idx = list(range(len(xs[0])))
+
+        if self.sort_in_input_length:
+            # sort in input lengths based on the first input
+            nonzero_sorted_idx = sorted(nonzero_idx, key=lambda i: -len(xs[0][i]))
+        else:
+            nonzero_sorted_idx = nonzero_idx
+
+        if len(nonzero_sorted_idx) != len(xs[0]):
+            logging.warning(
+                "Target sequences include empty tokenid (batch {} -> {}).".format(
+                    len(xs[0]), len(nonzero_sorted_idx)
+                )
+            )
+
+        # remove zero-length samples
+        xs = [[x[i] for i in nonzero_sorted_idx] for x in xs]
+        words = [[w[i] for i in nonzero_sorted_idx] for w in words ]
+        uttid_list = [uttid_list[i] for i in nonzero_sorted_idx]
+
+        x_names = list(x_feats_dict.keys())
+        w_names = list(words_dict.keys())
+        if self.load_output:
+            ys = [[y[i] for i in nonzero_sorted_idx] for y in ys]
+            y_names = list(y_feats_dict.keys())
+
+            # Keeping x_name and y_name, e.g. input1, for future extension
+            # the problem is here, I think
+            # maybe it's because 
+            return_batch = OrderedDict(
+                [
+                    *[(x_name, x) for x_name, x in zip(x_names, xs)],
+                    *[(w_name, w) for w_name, w in zip(w_names, words)],
+                    *[(y_name, y) for y_name, y in zip(y_names, ys)],
+                ]
+            )
+        else:
+            # There is no need to load word mask here, MAYBE?
+            return_batch = OrderedDict([(x_name, x) for x_name, x in zip(x_names, xs)])
+        
+        # assert return_batch==0, return_batch['input1'][1]
         return return_batch, uttid_list
 
     def _create_batch_mt(self, x_feats_dict, y_feats_dict, uttid_list):
